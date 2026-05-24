@@ -9,7 +9,7 @@
  * Each line is a JSON object: { ts, type, ... }
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
@@ -29,16 +29,64 @@ function write(entry: Record<string, unknown>): void {
   );
 }
 
+const extNameCache = new Map<string, string>();
+
 function extName(extPath: string, resolvedPath?: string): string {
-  if (resolvedPath) {
-    const parent = basename(dirname(resolvedPath));
-    const file = basename(resolvedPath);
-    return `${parent}/${file}`;
+  const key = resolvedPath || extPath;
+  const cached = extNameCache.get(key);
+  if (cached) return cached;
+
+  const result = deriveExtName(extPath, resolvedPath);
+  extNameCache.set(key, result);
+  return result;
+}
+
+function deriveExtName(extPath: string, resolvedPath?: string): string {
+  // For the runner ext objects: ext.path + ext.resolvedPath are both available
+  // ext.path = what was in settings.json or the local resolved dir (e.g. "../../VCS/.../pi-messenger")
+  // ext.resolvedPath = absolute path to the entry file
+
+  // Try reading package.json name from the extension directory
+  const entryFile = resolvedPath || extPath;
+  const pkgName = readPkgName(entryFile);
+  if (pkgName) return pkgName;
+
+  // Walk path segments looking for a "pi-" prefix
+  const full = resolvedPath || extPath;
+  const parts = full.split('/');
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].startsWith('pi-')) {
+      const file = basename(full);
+      return `${parts[i]}/${file}`;
+    }
   }
-  const parent = basename(dirname(extPath));
-  const file = basename(extPath);
-  if (parent === file) return file;
-  return `${parent}/${file}`;
+
+  // Fallback: parent dirname
+  const parent = basename(dirname(full));
+  const file = basename(full);
+  return parent === file ? file : `${parent}/${file}`;
+}
+
+function readPkgName(entryFile: string): string | undefined {
+  // Walk up from entry file looking for package.json
+  let dir = dirname(entryFile);
+  for (let i = 0; i < 5; i++) {
+    const pkgPath = join(dir, 'package.json');
+    try {
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name) {
+          const name = pkg.name.replace(/^@[^/]+\//, ''); // strip @scope/
+          const file = basename(entryFile);
+          return `${name}/${file}`;
+        }
+      }
+    } catch { /* skip */ }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
 }
 
 function findPiDist(): string | undefined {
@@ -104,7 +152,7 @@ async function patchRunner(): Promise<void> {
       for (const h of handlers) {
         write({ type: 'handler', ext: h.ext, event: h.event, ms: Math.round(h.ms) });
       }
-      write({ type: 'emit', event: event.type, ms: emitMs });
+      write({ type: 'emit', event: event.type, handlers: handlers.length, ms: emitMs });
       return result;
     };
 
@@ -127,7 +175,7 @@ async function patchLoader(): Promise<void> {
       const name = extName(extPath);
       const t0 = performance.now();
       const result = await origLoad.call(this, extPath, ...rest);
-      write({ type: 'ext', name, ms: Math.round(performance.now() - t0) });
+      write({ type: 'ext', name, path: extPath, ms: Math.round(performance.now() - t0) });
       return result;
     };
   } catch (e) {
@@ -144,27 +192,15 @@ export default async function defineExtension(pi: ExtensionAPI): Promise<void> {
 
   const history: Array<{ event: string; ms: number }> = [];
 
-  function record(event: string): void {
+  function record(event: string, data?: Record<string, unknown>): void {
     const elapsed = Math.round(performance.now() - factoryStart);
     history.push({ event, ms: elapsed });
-    write({ type: 'event', event, ms: elapsed });
-  }
-
-  function showReport(reason: string): void {
-    const lines: string[] = [`\u23F1 Startup trace (${reason})`];
-    for (let i = 0; i < history.length; i++) {
-      const h = history[i];
-      const prev = i > 0 ? history[i - 1].ms : 0;
-      const delta = h.ms - prev;
-      lines.push(`  ${h.event.padEnd(30)} +${String(delta).padStart(5)}ms  (${h.ms}ms total)`);
-    }
-    lines.push(`  ${'TOTAL'.padEnd(30)} ${String(Math.round(performance.now() - factoryStart)).padStart(6)}ms`);
-    write({ type: 'report', reason, lines });
+    write({ type: 'event', event, ms: elapsed, ...data });
   }
 
   pi.on('session_start', (_event: unknown, ctx: ExtensionContext) => {
-    record('session_start');
-    showReport((_event as { reason?: string })?.reason ?? 'unknown');
+    const reason = (_event as { reason?: string })?.reason ?? 'unknown';
+    record('session_start', { reason });
   });
 
   pi.on('session_shutdown', () => {
