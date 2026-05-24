@@ -47,11 +47,11 @@ export default function defineExtension(pi: ExtensionAPI): void {
     const total = Math.round(now - ts.factory);
     lines.push(`  ${'total'.padEnd(28)} ${String(total).padStart(6)}ms`);
 
-    ctx.ui.notify(lines.join('\n'), 'info');
-
-    if (process.env.PI_TRACER_VERBOSE === '1') {
-      console.error(`[pi-startup-tracer] ${reason} report:\n${lines.join('\n')}`);
+    for (const line of lines) {
+      console.error(`[pi-startup-tracer] ${line}`);
     }
+
+    ctx.ui.notify(lines.join('\n'), 'info');
   }
 
   pi.on('session_start', (_event: unknown, ctx: ExtensionContext) => {
