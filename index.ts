@@ -78,6 +78,8 @@ function readPkgName(entryFile: string): string | undefined {
         if (pkg.name) {
           const name = pkg.name.replace(/^@[^/]+\//, ''); // strip @scope/
           const file = basename(entryFile);
+          // If resolvedPath is the package dir (no file extension), just return the name
+          if (file === name || !file.includes('.')) return name;
           return `${name}/${file}`;
         }
       }
