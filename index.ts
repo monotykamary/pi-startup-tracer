@@ -23,9 +23,10 @@ async function patchRunner(): Promise<void> {
   if (runnerPatched) return;
 
   try {
-    const runnerMod: any = await import(
-      '@earendil-works/pi-coding-agent/dist/core/extensions/runner.js' as any
+    const runnerPath = require.resolve(
+      '@earendil-works/pi-coding-agent/dist/core/extensions/runner.js'
     );
+    const runnerMod: any = await import(runnerPath);
     const Runner = runnerMod?.ExtensionRunner;
     if (!Runner) return;
 
@@ -77,9 +78,10 @@ async function patchRunner(): Promise<void> {
 
 async function patchLoader(): Promise<void> {
   try {
-    const loaderMod: any = await import(
-      '@earendil-works/pi-coding-agent/dist/core/extensions/loader.js' as any
+    const loaderPath = require.resolve(
+      '@earendil-works/pi-coding-agent/dist/core/extensions/loader.js'
     );
+    const loaderMod: any = await import(loaderPath);
     const origLoad = loaderMod?.loadExtension;
     if (typeof origLoad !== 'function') return;
 
