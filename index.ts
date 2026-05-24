@@ -9,7 +9,28 @@
  * Set PI_TRACER_SILENT=1 to suppress.
  */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+
+function findPiDist(): string | undefined {
+  // At runtime inside jiti, require.resolve resolves from pi's entry point
+  // which doubles the path. Instead, search known locations and require.cache.
+  const candidates = [
+    // Global npm install
+    '/Users/monotykamary/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/dist',
+  ];
+  for (const d of candidates) {
+    if (existsSync(join(d, 'core/extensions/runner.js'))) return d;
+  }
+  // Fallback: scan require.cache for any loaded pi module
+  for (const path of Object.keys((globalThis as any).require?.cache ?? {})) {
+    const match = path.match(/(.+\/pi-coding-agent\/dist)\//);
+    if (match) return match[1];
+  }
+  return undefined;
+}
 
 const TRACE_ENABLED = process.env.PI_TRACER_SILENT !== '1';
 
@@ -23,9 +44,9 @@ async function patchRunner(): Promise<void> {
   if (runnerPatched) return;
 
   try {
-    const runnerPath = require.resolve(
-      '@earendil-works/pi-coding-agent/dist/core/extensions/runner.js'
-    );
+    const piDist = findPiDist();
+    if (!piDist) { log('could not locate pi dist/'); return; }
+    const runnerPath = join(piDist, 'core/extensions/runner.js');
     const runnerMod: any = await import(runnerPath);
     const Runner = runnerMod?.ExtensionRunner;
     if (!Runner) return;
@@ -78,9 +99,9 @@ async function patchRunner(): Promise<void> {
 
 async function patchLoader(): Promise<void> {
   try {
-    const loaderPath = require.resolve(
-      '@earendil-works/pi-coding-agent/dist/core/extensions/loader.js'
-    );
+    const piDist = findPiDist();
+    if (!piDist) { log('could not locate pi dist/'); return; }
+    const loaderPath = join(piDist, 'core/extensions/loader.js');
     const loaderMod: any = await import(loaderPath);
     const origLoad = loaderMod?.loadExtension;
     if (typeof origLoad !== 'function') return;
