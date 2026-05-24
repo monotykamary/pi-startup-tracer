@@ -9,8 +9,9 @@
  * Each line is a JSON object: { ts, type, ... }
  */
 
-import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
@@ -18,9 +19,26 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 const LOG_DIR = join(homedir(), '.pi', 'agent', 'logs');
 const LOG_PATH = join(LOG_DIR, 'startup-tracer.jsonl');
 
+let writeQueue = Promise.resolve();
+
 function write(entry: Record<string, unknown>): void {
   mkdirSync(LOG_DIR, { recursive: true });
-  appendFileSync(LOG_PATH, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n');
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n';
+  writeQueue = writeQueue.then(
+    () => writeFile(LOG_PATH, line, { flag: 'a' }).catch(() => {}),
+  );
+}
+
+function extName(extPath: string, resolvedPath?: string): string {
+  if (resolvedPath) {
+    const parent = basename(dirname(resolvedPath));
+    const file = basename(resolvedPath);
+    return `${parent}/${file}`;
+  }
+  const parent = basename(dirname(extPath));
+  const file = basename(extPath);
+  if (parent === file) return file;
+  return `${parent}/${file}`;
 }
 
 function findPiDist(): string | undefined {
@@ -65,13 +83,13 @@ async function patchRunner(): Promise<void> {
           const hStart = performance.now();
           try {
             const handlerResult = await handler(event, ctx);
-            handlers.push({ ext: ext.path.split('/').pop() || ext.path, event: event.type, ms: performance.now() - hStart });
+            handlers.push({ ext: extName(ext.path, ext.resolvedPath), event: event.type, ms: performance.now() - hStart });
             if (this.isSessionBeforeEvent(event) && handlerResult) {
               result = handlerResult;
               if (result.cancel) return result;
             }
           } catch (err) {
-            handlers.push({ ext: ext.path.split('/').pop() || ext.path, event: event.type, ms: performance.now() - hStart });
+            handlers.push({ ext: extName(ext.path, ext.resolvedPath), event: event.type, ms: performance.now() - hStart });
             this.emitError({
               extensionPath: ext.path,
               event: event.type,
@@ -106,7 +124,7 @@ async function patchLoader(): Promise<void> {
     if (typeof origLoad !== 'function') return;
 
     loaderMod.loadExtension = async function (extPath: string, ...rest: unknown[]) {
-      const name = extPath.split('/').pop() || extPath;
+      const name = extName(extPath);
       const t0 = performance.now();
       const result = await origLoad.call(this, extPath, ...rest);
       write({ type: 'ext', name, ms: Math.round(performance.now() - t0) });
