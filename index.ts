@@ -5,37 +5,36 @@
  * plus per-extension load (transpile + factory) via loader patching.
  * Must be listed FIRST in settings.json packages.
  *
- * All output goes to stderr: [pi-startup-tracer] ...
- * Set PI_TRACER_SILENT=1 to suppress.
+ * All output goes to ~/.pi/agent/logs/startup-tracer.jsonl
+ * Each line is a JSON object: { ts, type, ... }
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 
+const LOG_DIR = join(homedir(), '.pi', 'agent', 'logs');
+const LOG_PATH = join(LOG_DIR, 'startup-tracer.jsonl');
+
+function write(entry: Record<string, unknown>): void {
+  mkdirSync(LOG_DIR, { recursive: true });
+  appendFileSync(LOG_PATH, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n');
+}
+
 function findPiDist(): string | undefined {
-  // At runtime inside jiti, require.resolve resolves from pi's entry point
-  // which doubles the path. Instead, search known locations and require.cache.
   const candidates = [
-    // Global npm install
     '/Users/monotykamary/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/dist',
   ];
   for (const d of candidates) {
     if (existsSync(join(d, 'core/extensions/runner.js'))) return d;
   }
-  // Fallback: scan require.cache for any loaded pi module
   for (const path of Object.keys((globalThis as any).require?.cache ?? {})) {
     const match = path.match(/(.+\/pi-coding-agent\/dist)\//);
     if (match) return match[1];
   }
   return undefined;
-}
-
-const TRACE_ENABLED = process.env.PI_TRACER_SILENT !== '1';
-
-function log(...args: unknown[]): void {
-  if (TRACE_ENABLED) console.error('[pi-startup-tracer]', ...args);
 }
 
 let runnerPatched = false;
@@ -45,7 +44,7 @@ async function patchRunner(): Promise<void> {
 
   try {
     const piDist = findPiDist();
-    if (!piDist) { log('could not locate pi dist/'); return; }
+    if (!piDist) { write({ type: 'error', msg: 'could not locate pi dist/' }); return; }
     const runnerPath = join(piDist, 'core/extensions/runner.js');
     const runnerMod: any = await import(runnerPath);
     const Runner = runnerMod?.ExtensionRunner;
@@ -57,22 +56,22 @@ async function patchRunner(): Promise<void> {
       const emitStart = performance.now();
       const ctx = this.createContext();
       let result: any;
-      const timed: Array<{ ext: string; ms: number }> = [];
+      const handlers: Array<{ ext: string; event: string; ms: number }> = [];
 
       for (const ext of this.extensions) {
-        const handlers = ext.handlers.get(event.type);
-        if (!handlers || handlers.length === 0) continue;
-        for (const handler of handlers) {
+        const extHandlers = ext.handlers.get(event.type);
+        if (!extHandlers || extHandlers.length === 0) continue;
+        for (const handler of extHandlers) {
           const hStart = performance.now();
           try {
             const handlerResult = await handler(event, ctx);
-            timed.push({ ext: ext.path.split('/').pop() || ext.path, ms: performance.now() - hStart });
+            handlers.push({ ext: ext.path.split('/').pop() || ext.path, event: event.type, ms: performance.now() - hStart });
             if (this.isSessionBeforeEvent(event) && handlerResult) {
               result = handlerResult;
               if (result.cancel) return result;
             }
           } catch (err) {
-            timed.push({ ext: ext.path.split('/').pop() || ext.path, ms: performance.now() - hStart });
+            handlers.push({ ext: ext.path.split('/').pop() || ext.path, event: event.type, ms: performance.now() - hStart });
             this.emitError({
               extensionPath: ext.path,
               event: event.type,
@@ -84,23 +83,23 @@ async function patchRunner(): Promise<void> {
       }
 
       const emitMs = Math.round(performance.now() - emitStart);
-      for (const t of timed) {
-        log(`[handler] ${t.ext} ${event.type}: ${Math.round(t.ms)}ms`);
+      for (const h of handlers) {
+        write({ type: 'handler', ext: h.ext, event: h.event, ms: Math.round(h.ms) });
       }
-      log(`[emit] ${event.type}: ${emitMs}ms`);
+      write({ type: 'emit', event: event.type, ms: emitMs });
       return result;
     };
 
     runnerPatched = true;
   } catch (e) {
-    log(`runner patch failed: ${e instanceof Error ? e.message : String(e)}`);
+    write({ type: 'error', msg: `runner patch failed: ${e instanceof Error ? e.message : String(e)}` });
   }
 }
 
 async function patchLoader(): Promise<void> {
   try {
     const piDist = findPiDist();
-    if (!piDist) { log('could not locate pi dist/'); return; }
+    if (!piDist) { write({ type: 'error', msg: 'could not locate pi dist/' }); return; }
     const loaderPath = join(piDist, 'core/extensions/loader.js');
     const loaderMod: any = await import(loaderPath);
     const origLoad = loaderMod?.loadExtension;
@@ -110,11 +109,11 @@ async function patchLoader(): Promise<void> {
       const name = extPath.split('/').pop() || extPath;
       const t0 = performance.now();
       const result = await origLoad.call(this, extPath, ...rest);
-      log(`[ext] ${name}: ${Math.round(performance.now() - t0)}ms`);
+      write({ type: 'ext', name, ms: Math.round(performance.now() - t0) });
       return result;
     };
   } catch (e) {
-    log(`loader patch failed: ${e instanceof Error ? e.message : String(e)}`);
+    write({ type: 'error', msg: `loader patch failed: ${e instanceof Error ? e.message : String(e)}` });
   }
 }
 
@@ -123,14 +122,14 @@ export default async function defineExtension(pi: ExtensionAPI): Promise<void> {
 
   await Promise.all([patchRunner(), patchLoader()]);
 
-  log(`factory (self): ${Math.round(performance.now() - factoryStart)}ms`);
+  write({ type: 'factory', ext: 'pi-startup-tracer', ms: Math.round(performance.now() - factoryStart) });
 
   const history: Array<{ event: string; ms: number }> = [];
 
   function record(event: string): void {
     const elapsed = Math.round(performance.now() - factoryStart);
     history.push({ event, ms: elapsed });
-    log(`[event] ${event} at ${elapsed}ms`);
+    write({ type: 'event', event, ms: elapsed });
   }
 
   function showReport(reason: string): void {
@@ -142,7 +141,7 @@ export default async function defineExtension(pi: ExtensionAPI): Promise<void> {
       lines.push(`  ${h.event.padEnd(30)} +${String(delta).padStart(5)}ms  (${h.ms}ms total)`);
     }
     lines.push(`  ${'TOTAL'.padEnd(30)} ${String(Math.round(performance.now() - factoryStart)).padStart(6)}ms`);
-    for (const line of lines) log(line);
+    write({ type: 'report', reason, lines });
   }
 
   pi.on('session_start', (_event: unknown, ctx: ExtensionContext) => {
