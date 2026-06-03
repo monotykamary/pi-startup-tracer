@@ -2,9 +2,16 @@
 
 # ⏱ pi-startup-tracer
 
-Instrument pi's extension lifecycle to identify **startup and resume bottlenecks** — per-extension load time, per-handler invocation time, and per-emit totals, all written to a structured JSONL log.
+**Startup and resume bottleneck detection for [pi](https://github.com/earendil-works/pi-coding-agent)**
+
+_Per-extension load time, per-handler invocation time, and per-emit totals — to a structured JSONL log._
+
+[![pi extension](https://img.shields.io/badge/pi-extension-blueviolet)](https://github.com/earendil-works/pi-coding-agent)
+[![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 </div>
+
+---
 
 ---
 
