@@ -1,12 +1,12 @@
 {
   "name": "@monotykamary/pi-startup-tracer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@monotykamary/pi-startup-tracer",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "latest",
         "typescript": "^6.0.3"
@@ -1883,7 +1883,7 @@
       }
     },
     "node_modules/@earendil-works/pi-coding-agent/node_modules/xml-naming": {
-      "version": "0.1.0",
+      "version": "0.1.1",
       "resolved": "https://registry.npmjs.org/xml-naming/-/xml-naming-0.1.0.tgz",
       "integrity": "sha512-k8KO9hrMyNk6tUWqUfkTEZbezRRpONVOzUTnc97VnCvyj6Tf9lyUR9EDAIeiVLv56jsMcoXEwjW8Kv5yPY52lw==",
       "dev": true,
