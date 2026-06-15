@@ -189,6 +189,12 @@ Add as the **first** entry in your `packages` array:
 ### Option 2: Install via pi package
 
 ```bash
+pi install npm:@monotykamary/pi-startup-tracer
+```
+
+Or install from GitHub:
+
+```bash
 pi install https://github.com/monotykamary/pi-startup-tracer
 ```
 
