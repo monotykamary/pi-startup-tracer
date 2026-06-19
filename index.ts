@@ -5,18 +5,18 @@
  * plus per-extension load (transpile + factory) via loader patching.
  * Must be listed FIRST in settings.json packages.
  *
- * All output goes to ~/.pi/agent/logs/startup-tracer.jsonl
+ * All output goes to <agent dir>/logs/startup-tracer.jsonl (default ~/.pi/agent/logs)
  * Each line is a JSON object: { ts, type, ... }
  */
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
-import { homedir } from 'node:os';
 
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { getAgentDir, getPackageDir } from '@earendil-works/pi-coding-agent';
 
-const LOG_DIR = join(homedir(), '.pi', 'agent', 'logs');
+const LOG_DIR = join(getAgentDir(), 'logs');
 const LOG_PATH = join(LOG_DIR, 'startup-tracer.jsonl');
 
 let writeQueue = Promise.resolve();
@@ -92,16 +92,11 @@ function readPkgName(entryFile: string): string | undefined {
 }
 
 function findPiDist(): string | undefined {
-  const candidates = [
-    '/Users/monotykamary/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/dist',
-  ];
-  for (const d of candidates) {
-    if (existsSync(join(d, 'core/extensions/runner.js'))) return d;
-  }
-  for (const path of Object.keys((globalThis as any).require?.cache ?? {})) {
-    const match = path.match(/(.+\/pi-coding-agent\/dist)\//);
-    if (match) return match[1];
-  }
+  // getPackageDir() resolves pi's own install root and honors PI_PACKAGE_DIR
+  // (Nix/Guix). The runner and loader are internal modules not re-exported
+  // from the public API, so import them directly from dist/.
+  const piDist = join(getPackageDir(), 'dist');
+  if (existsSync(join(piDist, 'core/extensions/runner.js'))) return piDist;
   return undefined;
 }
 
