@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.8",
+    "@types/node": "^26.0.0",
     "typescript": "^6.0.3"
   },
   "packageManager": "pnpm@11.6.0"
