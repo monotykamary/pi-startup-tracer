@@ -1,12 +1,12 @@
 {
   "name": "@monotykamary/pi-startup-tracer",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@monotykamary/pi-startup-tracer",
-      "version": "0.1.2",
+      "version": "0.1.4",
       "devDependencies": {
         "@earendil-works/pi-coding-agent": "^0.79.8",
         "typescript": "^6.0.3"
