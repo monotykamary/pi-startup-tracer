@@ -1,6 +1,6 @@
 {
   "name": "@monotykamary/pi-startup-tracer",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Trace pi extension lifecycle timing to identify startup and resume bottlenecks",
   "type": "module",
   "pi": {
@@ -9,11 +9,16 @@
     ]
   },
   "scripts": {
+    "test:host": "node scripts/pi99-host.mjs",
+    "test": "bun test tests",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.87.0",
+    "@earendil-works/pi-coding-agent": "0.99.0",
     "@types/node": "^26.0.0",
     "typescript": "^6.0.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   }
 }

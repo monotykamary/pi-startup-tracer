@@ -2,7 +2,7 @@
  * pi-startup-tracer
  *
  * Instruments pi's ExtensionRunner to trace per-handler and per-emit timing,
- * plus per-extension load (transpile + factory) via loader patching.
+ * plus native PI_TIMING module-import/factory diagnostics (no loader patch).
  * Must be listed FIRST in settings.json packages.
  *
  * All output goes to <agent dir>/logs/startup-tracer.jsonl (default ~/.pi/agent/logs)
@@ -14,7 +14,8 @@ import { writeFile } from 'node:fs/promises';
 import { join, dirname, basename } from 'node:path';
 
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { getAgentDir, getPackageDir } from '@earendil-works/pi-coding-agent';
+import { AgentSession, getAgentDir } from '@earendil-works/pi-coding-agent';
+import { instrumentRunner } from './instrument.js';
 
 const LOG_DIR = join(getAgentDir(), 'logs');
 const LOG_PATH = join(LOG_DIR, 'startup-tracer.jsonl');
@@ -91,99 +92,29 @@ function readPkgName(entryFile: string): string | undefined {
   return undefined;
 }
 
-function findPiDist(): string | undefined {
-  // getPackageDir() resolves pi's own install root and honors PI_PACKAGE_DIR
-  // (Nix/Guix). The runner and loader are internal modules not re-exported
-  // from the public API, so import them directly from dist/.
-  const piDist = join(getPackageDir(), 'dist');
-  if (existsSync(join(piDist, 'core/extensions/runner.js'))) return piDist;
-  return undefined;
-}
-
-let runnerPatched = false;
-
-async function patchRunner(): Promise<void> {
-  if (runnerPatched) return;
-
-  try {
-    const piDist = findPiDist();
-    if (!piDist) { write({ type: 'error', msg: 'could not locate pi dist/' }); return; }
-    const runnerPath = join(piDist, 'core/extensions/runner.js');
-    const runnerMod: any = await import(runnerPath);
-    const Runner = runnerMod?.ExtensionRunner;
-    if (!Runner) return;
-
-    const origEmit = Runner.prototype.emit;
-
-    Runner.prototype.emit = async function (event: { type: string }) {
-      const emitStart = performance.now();
-      const ctx = this.createContext();
-      let result: any;
-      const handlers: Array<{ ext: string; event: string; ms: number }> = [];
-
-      for (const ext of this.extensions) {
-        const extHandlers = ext.handlers.get(event.type);
-        if (!extHandlers || extHandlers.length === 0) continue;
-        for (const handler of extHandlers) {
-          const hStart = performance.now();
-          try {
-            const handlerResult = await handler(event, ctx);
-            handlers.push({ ext: extName(ext.path, ext.resolvedPath), event: event.type, ms: performance.now() - hStart });
-            if (this.isSessionBeforeEvent(event) && handlerResult) {
-              result = handlerResult;
-              if (result.cancel) return result;
-            }
-          } catch (err) {
-            handlers.push({ ext: extName(ext.path, ext.resolvedPath), event: event.type, ms: performance.now() - hStart });
-            this.emitError({
-              extensionPath: ext.path,
-              event: event.type,
-              error: err instanceof Error ? err.message : String(err),
-              stack: err instanceof Error ? err.stack : undefined,
-            });
-          }
-        }
-      }
-
-      const emitMs = Math.round(performance.now() - emitStart);
-      for (const h of handlers) {
-        write({ type: 'handler', ext: h.ext, event: h.event, ms: Math.round(h.ms) });
-      }
-      write({ type: 'emit', event: event.type, handlers: handlers.length, ms: emitMs });
-      return result;
-    };
-
-    runnerPatched = true;
-  } catch (e) {
-    write({ type: 'error', msg: `runner patch failed: ${e instanceof Error ? e.message : String(e)}` });
-  }
-}
-
-async function patchLoader(): Promise<void> {
-  try {
-    const piDist = findPiDist();
-    if (!piDist) { write({ type: 'error', msg: 'could not locate pi dist/' }); return; }
-    const loaderPath = join(piDist, 'core/extensions/loader.js');
-    const loaderMod: any = await import(loaderPath);
-    const origLoad = loaderMod?.loadExtension;
-    if (typeof origLoad !== 'function') return;
-
-    loaderMod.loadExtension = async function (extPath: string, ...rest: unknown[]) {
-      const name = extName(extPath);
-      const t0 = performance.now();
-      const result = await origLoad.call(this, extPath, ...rest);
-      write({ type: 'ext', name, path: extPath, ms: Math.round(performance.now() - t0) });
-      return result;
-    };
-  } catch (e) {
-    write({ type: 'error', msg: `loader patch failed: ${e instanceof Error ? e.message : String(e)}` });
-  }
+function patchRunner(): void {
+  const prototype = AgentSession.prototype;
+  const original = prototype.bindExtensions;
+  const marker = Symbol.for('pi-startup-tracer.bind.v1');
+  if ((original as any)[marker]) return;
+  const wrapped: typeof original = async function (this: AgentSession, ...args) {
+    // Capture the actual runner from the mapped host constructor, never a
+    // second unbundled module imported beside the CLI's bundled runtime.
+    instrumentRunner(Object.getPrototypeOf(this.extensionRunner), write, extName);
+    return original.apply(this, args);
+  };
+  Object.defineProperty(wrapped, marker, { value: true });
+  prototype.bindExtensions = wrapped;
 }
 
 export default async function defineExtension(pi: ExtensionAPI): Promise<void> {
   const factoryStart = performance.now();
 
-  await Promise.all([patchRunner(), patchLoader()]);
+  await patchRunner();
+  // loadExtension is private in 0.99 and ESM exports are immutable. Native
+  // PI_TIMING traces both module import and factory duration without replacing
+  // the loader or bypassing its transactional registration/rollback.
+  write({ type: 'loader', native: 'PI_TIMING=1', enabled: process.env.PI_TIMING === '1' });
 
   write({ type: 'factory', ext: 'pi-startup-tracer', ms: Math.round(performance.now() - factoryStart) });
 
@@ -200,8 +131,9 @@ export default async function defineExtension(pi: ExtensionAPI): Promise<void> {
     record('session_start', { reason });
   });
 
-  pi.on('session_shutdown', () => {
+  pi.on('session_shutdown', async () => {
     record('session_shutdown');
+    await writeQueue;
   });
 
   pi.on('session_tree', () => {

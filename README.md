@@ -4,7 +4,7 @@
 
 **Startup and resume bottleneck detection for [pi](https://github.com/earendil-works/pi-coding-agent)**
 
-_Per-extension load time, per-handler invocation time, and per-emit totals — to a structured JSONL log._
+_Per-handler and per-emit timings in JSONL, plus Pi's native per-extension startup timing._
 
 [![pi extension](https://img.shields.io/badge/pi-extension-blueviolet)](https://github.com/earendil-works/pi-coding-agent)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
@@ -15,13 +15,22 @@ _Per-extension load time, per-handler invocation time, and per-emit totals — t
 
 ---
 
+## Pi 0.99 compatibility (0.1.13)
+
+Tested with Pi **0.99.0**. Host-provided Pi packages and TypeBox are peers (`*`), not bundled runtime dependencies; development uses exact Pi 0.99.0 pins and host-compatible TypeBox where needed.
+
+Timing delegates to Pi's native dispatchers, preserving snapshot/unsubscribe behavior, cancellation, actionable boundaries and structured-result redaction. Set `PI_TIMING=1` before starting Pi for native module-import/factory timings; the private ESM loader is not replaced. The runner is captured through Pi's public mapped `AgentSession.bindExtensions`, preserving identity in SDK and bundled CLI hosts.
+
+Run `bun run test:host` for the offline real-host load, native codemode/nested-call, module-identity and reload checks. Set `PI99_HOST_PACKAGE` to an installed Pi package directory to test that host explicitly; add `PI99_HOST_ENTRY=bundle` to check the bundled CLI runtime's constructors.
+
 ## Overview
 
-pi-startup-tracer monkey-patches pi's `ExtensionRunner.emit` and extension loader to capture timing at every level:
+pi-startup-tracer instruments Pi's native runner snapshots and dispatch methods without replacing event policy. Native `PI_TIMING=1` measures extension loading:
 
 | Trace type | What it measures |
 |---|---|
-| `ext` | Time to load each extension (jiti transpile + factory call) |
+| Native startup timings | Module-import and factory durations on stderr (`PI_TIMING=1`) |
+| `loader` | Whether native startup timing was enabled |
 | `handler` | Time each event handler takes (per extension, per event) |
 | `emit` | Total time for all handlers of a given event, plus handler count |
 | `event` | Pi lifecycle events (`session_start`, `turn_end`, etc.) with elapsed ms since tracer init |
@@ -83,17 +92,9 @@ cat ~/.pi/agent/logs/startup-tracer.jsonl | jq 'select(.event=="session_start")'
 
 ## Entry types
 
-### `ext` — Extension load time
+### Native extension-load timings
 
-```jsonl
-{"ts":"...","type":"ext","name":"pi-messenger-swarm","path":"../../VCS/.../pi-messenger","ms":462}
-```
-
-| Field | Description |
-|---|---|
-| `name` | Package name (from `package.json` or `pi-` path segment) |
-| `path` | Raw extension path from `settings.json` |
-| `ms` | Load time (jiti transpile + factory call) |
+Start Pi with `PI_TIMING=1 pi` to print separate module-import and factory durations on stderr. Pi 0.99's `loadExtension` is private and cannot safely be replaced through immutable ESM exports. The JSONL `loader` record reports whether native timing was enabled; it does not invent unavailable `ext` measurements.
 
 ### `handler` — Per-handler invocation
 
@@ -159,15 +160,13 @@ Names are cached per extension path so the filesystem walk only happens once.
 
 ## How it works
 
-Two monkey-patches applied at factory time:
+An idempotent prototype hook delegates every supported asynchronous `emit*` method to Pi. Timing wrappers are added to handler snapshots, not the original handler identities, so unsubscribe and in-flight snapshot semantics remain native. `finally` records timings for successful, failed and cancelled handlers. Actionable boundaries and transforming events retain Pi's validation and composition rules.
 
-1. **`ExtensionRunner.prototype.emit`** — Wraps the handler dispatch loop to time each handler invocation and the total emit. Writes `{ type: "handler" }` per handler and `{ type: "emit" }` after all handlers complete.
-
-2. **`loadExtension` (loader module)** — Wraps each extension load (jiti transpile + factory) to measure per-extension initialization. Writes `{ type: "ext" }` for each loaded extension.
+Loader timing uses native `PI_TIMING=1`; no loader exports or registration transactions are replaced.
 
 The tracer also subscribes to pi lifecycle events (`session_start`, `session_shutdown`, `turn_start`, `turn_end`) and writes `{ type: "event" }` entries with elapsed milliseconds.
 
-All file writes are asynchronous and serialized through a promise queue — no blocking I/O.
+Log appends are asynchronous and serialized through a promise queue, which is flushed at session shutdown. Directory creation and cached package-name discovery use synchronous filesystem operations.
 
 ---
 
@@ -204,8 +203,8 @@ pi install https://github.com/monotykamary/pi-startup-tracer
 
 ## Limitations
 
-- **Monkey-patching** — Relies on pi's internal `ExtensionRunner` and loader module paths. May break across pi updates if the internal API changes.
-- **Hardcoded dist path** — Uses `require.cache` fallback to locate pi's `dist/` directory if the default path doesn't match your install.
+- **Monkey-patching** — Relies on Pi 0.99's internal runner methods and handler snapshot layout; future host changes require revalidation.
+- **Runtime layout** — Resolves `dist/core/extensions/runner.js` from `getPackageDir()`. Standalone/embedded distributions are not covered by the Node-host probes.
 - **File writes** — Log file grows unbounded. Rotate or clear `~/.pi/agent/logs/startup-tracer.jsonl` manually.
 
 ---
