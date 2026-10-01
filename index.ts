@@ -111,7 +111,7 @@ export default async function defineExtension(pi: ExtensionAPI): Promise<void> {
   const factoryStart = performance.now();
 
   await patchRunner();
-  // loadExtension is private in 0.99 and ESM exports are immutable. Native
+  // loadExtension is private in 1.0 and ESM exports are immutable. Native
   // PI_TIMING traces both module import and factory duration without replacing
   // the loader or bypassing its transactional registration/rollback.
   write({ type: 'loader', native: 'PI_TIMING=1', enabled: process.env.PI_TIMING === '1' });

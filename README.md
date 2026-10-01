@@ -15,13 +15,20 @@ _Per-handler and per-emit timings in JSONL, plus Pi's native per-extension start
 
 ---
 
+## Pi 1.0 compatibility (0.1.14)
+
+Tested against Pi **1.0.0** with exact SDK development pins and wildcard host peers.
+Host probes verify actual handler/emit timing records and shutdown write flushing, while native dispatch tests cover snapshots, unsubscribe, cancellation and result redaction.
+
+Run `bun run test:host` for the offline real-host regression. Set `PI1_HOST_PACKAGE` to an installed Pi package directory and `PI1_HOST_ENTRY=bundle` to test its bundled CLI runtime.
+
 ## Pi 0.99 compatibility (0.1.13)
 
 Tested with Pi **0.99.0**. Host-provided Pi packages and TypeBox are peers (`*`), not bundled runtime dependencies; development uses exact Pi 0.99.0 pins and host-compatible TypeBox where needed.
 
 Timing delegates to Pi's native dispatchers, preserving snapshot/unsubscribe behavior, cancellation, actionable boundaries and structured-result redaction. Set `PI_TIMING=1` before starting Pi for native module-import/factory timings; the private ESM loader is not replaced. The runner is captured through Pi's public mapped `AgentSession.bindExtensions`, preserving identity in SDK and bundled CLI hosts.
 
-Run `bun run test:host` for the offline real-host load, native codemode/nested-call, module-identity and reload checks. Set `PI99_HOST_PACKAGE` to an installed Pi package directory to test that host explicitly; add `PI99_HOST_ENTRY=bundle` to check the bundled CLI runtime's constructors.
+Run `bun run test:host` for the offline real-host load, native codemode/nested-call, module-identity and reload checks. Set `PI1_HOST_PACKAGE` to an installed Pi package directory to test that host explicitly; add `PI1_HOST_ENTRY=bundle` to check the bundled CLI runtime's constructors.
 
 ## Overview
 
@@ -203,8 +210,9 @@ pi install https://github.com/monotykamary/pi-startup-tracer
 
 ## Limitations
 
-- **Monkey-patching** — Relies on Pi 0.99's internal runner methods and handler snapshot layout; future host changes require revalidation.
-- **Runtime layout** — Resolves `dist/core/extensions/runner.js` from `getPackageDir()`. Standalone/embedded distributions are not covered by the Node-host probes.
+- **Monkey-patching** — Relies on Pi 1.0's internal runner methods and handler snapshot layout; future host changes require revalidation.
+- **Runtime layout** — Captures the live runner through the mapped `AgentSession`; native ESM and bundled CLI hosts are probed. Standalone binaries are not covered.
+- **Patch lifetime** — Timing hooks are process-scoped and idempotent across reload. Shutdown flushes writes but does not remove prototype instrumentation; restart Pi to remove it completely.
 - **File writes** — Log file grows unbounded. Rotate or clear `~/.pi/agent/logs/startup-tracer.jsonl` manually.
 
 ---

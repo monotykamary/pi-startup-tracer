@@ -5,7 +5,7 @@ type Sink = (entry: Record<string, unknown>) => void;
 const PATCH = Symbol.for('pi-startup-tracer.runner.v2');
 const SLICE = Symbol.for('pi-startup-tracer.snapshot.v2');
 
-/** Instrument Pi 0.99's handler snapshots, not its dispatch policy. Original
+/** Instrument Pi 1.0's handler snapshots, not its dispatch policy. Original
  * arrays/functions retain identity so native on() unsubscribe still works,
  * including when a handler unsubscribes a sibling during an active dispatch. */
 export function instrumentRunner(prototype: any, sink: Sink, name: (path: string, resolved?: string) => string): void {
