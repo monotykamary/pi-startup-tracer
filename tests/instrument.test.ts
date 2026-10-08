@@ -48,3 +48,41 @@ test('native tool-result redaction also drops stale structured content', async (
   expect(result.content).toEqual([{ type: 'text', text: 'redacted' }]);
   expect(result.structuredContent).toBeUndefined();
 });
+
+test('tracing preserves nested tool_call blocking, mutations and fail-closed errors', async () => {
+  const event = { type: 'tool_call', toolName: 'probe', toolCallId: 'parent/1', parentToolCallId: 'parent', input: { value: 1 } };
+  const seen: unknown[] = [];
+  const value = runner(new Map([['tool_call', [
+    (e: typeof event) => { seen.push(e); e.input.value = 2; },
+    (e: typeof event) => { expect(e.input.value).toBe(2); return { block: true, reason: 'blocked' }; },
+    () => { throw new Error('must not run after block'); },
+  ]]]));
+  expect(await value.emitToolCall(event)).toEqual({ block: true, reason: 'blocked' });
+  expect(seen).toEqual([event]);
+  expect(event.parentToolCallId).toBe('parent');
+  const failing = runner(new Map([['tool_call', [() => { throw new Error('fail closed'); }]]]));
+  await expect(failing.emitToolCall(event)).rejects.toThrow('fail closed');
+});
+
+test('raw stream handlers remain ordered and errors do not stop notification dispatch', async () => {
+  const data = Object.freeze({ type: 'parsed-provider-event', ordinal: 1 });
+  const event = { type: 'provider_stream_event', provider: 'offline', api: 'offline-api', model: 'test', data };
+  const order: string[] = [];
+  const value = runner(new Map([['provider_stream_event', [
+    async (e: typeof event) => { expect(e.data).toBe(data); await Promise.resolve(); order.push('first'); },
+    () => { order.push('error'); throw new Error('observer only'); },
+    (e: typeof event) => { expect(e).toBe(event); order.push('last'); },
+  ]]]));
+  expect(await value.emit(event)).toBeUndefined();
+  expect(order).toEqual(['first', 'error', 'last']);
+  expect(logs.some(e => e.type === 'error' && (e.e as any)?.event === 'provider_stream_event')).toBe(true);
+  expect(data).toEqual({ type: 'parsed-provider-event', ordinal: 1 });
+});
+
+test('agent_settled forwards aborted and remains notification-only under tracing', async () => {
+  const seen: boolean[] = [];
+  const value = runner(new Map([['agent_settled', [(e: { aborted: boolean }) => { seen.push(e.aborted); return { continue: true }; }]]]));
+  expect(await value.emit({ type: 'agent_settled', aborted: true })).toBeUndefined();
+  expect(await value.emit({ type: 'agent_settled', aborted: false })).toBeUndefined();
+  expect(seen).toEqual([true, false]);
+});

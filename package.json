@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
     "@types/node": "^26.0.0",
     "typescript": "^6.0.3"
   },
