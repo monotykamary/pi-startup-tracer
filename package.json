@@ -1,6 +1,6 @@
 {
   "name": "@monotykamary/pi-startup-tracer",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Trace pi extension lifecycle timing to identify startup and resume bottlenecks",
   "repository": {
     "type": "git",
